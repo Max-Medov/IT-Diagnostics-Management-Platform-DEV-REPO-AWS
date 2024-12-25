@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: it-diagnostics
+data:
+  dashboard-provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: "Default"
+        folder: ""
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards
+
