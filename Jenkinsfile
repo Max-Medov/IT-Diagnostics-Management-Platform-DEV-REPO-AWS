@@ -96,9 +96,25 @@ pipeline {
                         // Create S3 bucket if it doesn't exist
                         sh """
                             if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
-                                aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
+                                if [ \"${AWS_REGION}\" = \"us-east-1\" ]; then
+                                    aws s3api create-bucket --bucket ${S3_BUCKET}
+                                else
+                                    aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
+                                fi
+
+                                # Enable versioning
                                 aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
-                                aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+                                # Enable server-side encryption
+                                aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{
+                                    "Rules": [
+                                        {
+                                            "ApplyServerSideEncryptionByDefault": {
+                                                "SSEAlgorithm": "AES256"
+                                            }
+                                        }
+                                    ]
+                                }'
                             fi
                         """
                     }
