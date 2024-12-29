@@ -8,7 +8,7 @@ pipeline {
         IMAGE_PREFIX = "it-diagnostics-management-platform"
         KUBE_NAMESPACE = "it-diagnostics"
         AWS_REGION = "us-east-1"
-        CLUSTER_NAME = "eks-cluster-name"
+        CLUSTER_NAME = "eks-max-project"
         TEST_USER = "testuser"
         TEST_PASS = "testpass"
         S3_BUCKET = "max-terraform-state-bucket"
