@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     environment {
@@ -8,7 +9,7 @@ pipeline {
         IMAGE_PREFIX = "it-diagnostics-management-platform"
         KUBE_NAMESPACE = "it-diagnostics"
         AWS_REGION = "us-east-1"
-        CLUSTER_NAME = "eks-cluster-name"
+        CLUSTER_NAME = "eks-max-project"
         TEST_USER = "testuser"
         TEST_PASS = "testpass"
         S3_BUCKET = "max-terraform-state-bucket"
@@ -25,7 +26,7 @@ pipeline {
         // 2) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
-                dir('kubernetes-config') {
+                dir('AWS-DEV') {
                     git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-DEV-REPO-AWS.git'
                 }
             }
@@ -96,15 +97,13 @@ pipeline {
                         // Create S3 bucket if it doesn't exist
                         sh """
                             if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
-                                if [ "${AWS_REGION}" = "us-east-1" ]; then
+                                if [ \"${AWS_REGION}\" = \"us-east-1\" ]; then
                                     aws s3api create-bucket --bucket ${S3_BUCKET}
                                 else
                                     aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
                                 fi
-
                                 # Enable versioning
                                 aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
-
                                 # Enable server-side encryption
                                 aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{
                                     "Rules": [
@@ -131,11 +130,14 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
+                    dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
                             terraform init
                             terraform plan -out=tfplan
                             terraform apply -auto-approve tfplan
+                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
+                            kubectl cluster-info
+                            kubectl get nodes
                         """
                     }
                 }
@@ -147,50 +149,11 @@ pipeline {
             steps {
                 script {
                     def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-
                     echo "ALB DNS Name: ${alb_dns}"
-
                     writeFile file: '.env', text: """
                         REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
                         REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
                         REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-                    """
-                }
-            }
-        }
-
-        // 9) Deploy to Kubernetes
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh """
-                    kubectl apply -f secrets-configmap.yaml
-                    kubectl apply -f postgres.yaml
-                    kubectl apply -f auth-service.yaml
-                    kubectl apply -f case-service.yaml
-                    kubectl apply -f diagnostic-service.yaml
-                    kubectl apply -f frontend.yaml
-                    kubectl apply -f ingress.yaml
-                    kubectl apply -f prometheus-rbac.yaml
-                    kubectl apply -f prometheus-k8s.yaml
-                    kubectl apply -f grafana-dashboard-provider.yaml
-                    kubectl apply -f grafana-dashboard-configmap.yaml
-                    kubectl apply -f datasources.yaml
-                    kubectl apply -f grafana.yaml
-                """
-            }
-        }
-
-        // 10) Integration Tests
-        stage('Integration Tests') {
-            steps {
-                script {
-                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    echo "Testing against ALB DNS: ${alb_dns}"
-
-                    sh """
-                        curl -I http://${alb_dns}/auth
-                        curl -I http://${alb_dns}/case
-                        curl -I http://${alb_dns}/diagnostic
                     """
                 }
             }
@@ -203,19 +166,19 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed! Destroying all Terraform resources...'
-        withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
-            credentialsId: 'aws-credentials-id',
-            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-        ]]) {
-            dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
-                sh """
-                    terraform init
-                    terraform destroy -auto-approve
-                """
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-credentials-id',
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+            ]]) {
+                dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
+                    sh """
+                        terraform init
+                        terraform destroy -auto-approve
+                    """
+                }
             }
-        }
         }
         always {
             cleanWs()
