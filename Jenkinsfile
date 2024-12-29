@@ -8,7 +8,7 @@ pipeline {
         IMAGE_PREFIX = "it-diagnostics-management-platform"
         KUBE_NAMESPACE = "it-diagnostics"
         AWS_REGION = "us-east-1"
-        CLUSTER_NAME = "eks-max-project"
+        CLUSTER_NAME = "eks-cluster-name"
         TEST_USER = "testuser"
         TEST_PASS = "testpass"
         S3_BUCKET = "max-terraform-state-bucket"
@@ -25,7 +25,7 @@ pipeline {
         // 2) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
-                dir('AWS-DEV') {
+                dir('kubernetes-config') {
                     git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-DEV-REPO-AWS.git'
                 }
             }
@@ -96,7 +96,7 @@ pipeline {
                         // Create S3 bucket if it doesn't exist
                         sh """
                             if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
-                                if [ \"${AWS_REGION}\" = \"us-east-1\" ]; then
+                                if [ "${AWS_REGION}" = "us-east-1" ]; then
                                     aws s3api create-bucket --bucket ${S3_BUCKET}
                                 else
                                     aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
@@ -131,67 +131,54 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('AWS-DEV/terraform/terraform-aws-infra') {
+                    dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
                         sh """
-                            # Step 1: Apply Terraform
                             terraform init
                             terraform plan -out=tfplan
                             terraform apply -auto-approve tfplan
-                            
-                            # Step 2: Update kubeconfig dynamically
-                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
-                            
-                            # Step 3: Verify cluster connectivity
-                            kubectl cluster-info
-                            kubectl get nodes
                         """
                     }
                 }
             }
         }
 
-	// 8) Fetch ALB DNS Name
-	stage('Fetch ALB DNS Name') {
-	    steps {
-		script {
-		    // Retrieve ALB DNS Name dynamically
-		    def alb_dns = sh(script: """
-		        kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
-		    """, returnStdout: true).trim()
+        // 8) Fetch ALB DNS Name
+        stage('Fetch ALB DNS Name') {
+            steps {
+                script {
+                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
 
-		    echo "ALB DNS Name: ${alb_dns}"
+                    echo "ALB DNS Name: ${alb_dns}"
 
-		    // Write the DNS name to .env file for React configuration
-		    writeFile file: '.env', text: """
-		        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-		        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-		        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-		    """
-		}
-	    }
-	}
+                    writeFile file: '.env', text: """
+                        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+                        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+                        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+                    """
+                }
+            }
+        }
 
-	stage('Deploy to Kubernetes') {
-	    steps {
-		dir('AWS-DEV/kubernetes') { // Updated path
-		    sh """
-		        kubectl apply -f secrets-configmap.yaml
-		        kubectl apply -f postgres.yaml
-		        kubectl apply -f auth-service.yaml
-		        kubectl apply -f case-service.yaml
-		        kubectl apply -f diagnostic-service.yaml
-		        kubectl apply -f frontend.yaml
-		        kubectl apply -f ingress.yaml
-		        kubectl apply -f prometheus-rbac.yaml
-		        kubectl apply -f prometheus-k8s.yaml
-		        kubectl apply -f grafana-dashboard-provider.yaml
-		        kubectl apply -f grafana-dashboard-configmap.yaml
-		        kubectl apply -f datasources.yaml
-		        kubectl apply -f grafana.yaml
-		    """
-		}
-	    }
-	}
+        // 9) Deploy to Kubernetes
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh """
+                    kubectl apply -f secrets-configmap.yaml
+                    kubectl apply -f postgres.yaml
+                    kubectl apply -f auth-service.yaml
+                    kubectl apply -f case-service.yaml
+                    kubectl apply -f diagnostic-service.yaml
+                    kubectl apply -f frontend.yaml
+                    kubectl apply -f ingress.yaml
+                    kubectl apply -f prometheus-rbac.yaml
+                    kubectl apply -f prometheus-k8s.yaml
+                    kubectl apply -f grafana-dashboard-provider.yaml
+                    kubectl apply -f grafana-dashboard-configmap.yaml
+                    kubectl apply -f datasources.yaml
+                    kubectl apply -f grafana.yaml
+                """
+            }
+        }
 
         // 10) Integration Tests
         stage('Integration Tests') {
@@ -216,31 +203,23 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed! Destroying all Terraform resources...'
-        
-            // Ensure AWS credentials are set
-            withCredentials([[
-                $class: 'AmazonWebServicesCredentialsBinding',
-                credentialsId: 'aws-credentials-id',
-                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-            ]]) {
-                // Go to Terraform directory
-                dir('AWS-DEV/terraform/terraform-aws-infra') {
-                    sh """
-                        # Initialize Terraform backend
-                        terraform init
-                    
-                        # Destroy resources automatically
-                        terraform destroy -auto-approve
-                    """
-                }
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-credentials-id',
+            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+        ]]) {
+            dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
+                sh """
+                    terraform init
+                    terraform destroy -auto-approve
+                """
             }
         }
+        }
         always {
-            echo 'Cleaning workspace...'
-            cleanWs() // Clean Jenkins workspace always (success or failure)
+            cleanWs()
         }
     }
-
-
+}
 
