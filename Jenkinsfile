@@ -215,24 +215,32 @@ pipeline {
             echo 'Pipeline completed successfully!'
         }
         failure {
-            echo 'Some stage failed. Check logs.'
+            echo 'Pipeline failed! Destroying all Terraform resources...'
+        
+            // Ensure AWS credentials are set
             withCredentials([[
                 $class: 'AmazonWebServicesCredentialsBinding',
                 credentialsId: 'aws-credentials-id',
                 accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                 secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
             ]]) {
+                // Go to Terraform directory
                 dir('AWS-DEV/terraform/terraform-aws-infra') {
                     sh """
+                        # Initialize Terraform backend
                         terraform init
+                    
+                        # Destroy resources automatically
                         terraform destroy -auto-approve
                     """
                 }
             }
         }
         always {
-            cleanWs()
+            echo 'Cleaning workspace...'
+            cleanWs() // Clean Jenkins workspace always (success or failure)
         }
     }
+
 
 
