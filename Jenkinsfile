@@ -133,11 +133,7 @@ pipeline {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
                             terraform init
-                            terraform plan -out=tfplan
-                            terraform apply -auto-approve tfplan
-                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
-                            kubectl cluster-info
-                            kubectl get nodes
+                            terraform destroy -auto-approve
                         """
                     }
                 }
