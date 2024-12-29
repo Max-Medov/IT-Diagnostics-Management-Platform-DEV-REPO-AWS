@@ -172,7 +172,7 @@ pipeline {
                 accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                 secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
             ]]) {
-                dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
+                dir('AWS-DEV/terraform/terraform-aws-infra') {
                     sh """
                         terraform init
                         terraform destroy -auto-approve
