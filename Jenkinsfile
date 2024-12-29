@@ -133,33 +133,43 @@ pipeline {
                 ]]) {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
-                            pwd
-                            ls -R
+                            # Step 1: Apply Terraform
                             terraform init
                             terraform plan -out=tfplan
                             terraform apply -auto-approve tfplan
+                            
+                            # Step 2: Update kubeconfig dynamically
+                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
+                            
+                            # Step 3: Verify cluster connectivity
+                            kubectl cluster-info
+                            kubectl get nodes
                         """
                     }
                 }
             }
         }
 
-        // 8) Fetch ALB DNS Name
-        stage('Fetch ALB DNS Name') {
-            steps {
-                script {
-                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+	// 8) Fetch ALB DNS Name
+	stage('Fetch ALB DNS Name') {
+	    steps {
+		script {
+		    // Retrieve ALB DNS Name dynamically
+		    def alb_dns = sh(script: """
+		        kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+		    """, returnStdout: true).trim()
 
-                    echo "ALB DNS Name: ${alb_dns}"
+		    echo "ALB DNS Name: ${alb_dns}"
 
-                    writeFile file: '.env', text: """
-                        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-                        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-                        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-                    """
-                }
-            }
-        }
+		    // Write the DNS name to .env file for React configuration
+		    writeFile file: '.env', text: """
+		        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+		        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+		        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+		    """
+		}
+	    }
+	}
 
 	stage('Deploy to Kubernetes') {
 	    steps {
