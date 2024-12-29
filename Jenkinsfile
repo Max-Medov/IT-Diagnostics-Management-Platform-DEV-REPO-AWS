@@ -16,7 +16,7 @@ pipeline {
         // 1) Checkout main code
         stage('Checkout Application Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform.git'
+                git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-AWS.git'
             }
         }
 
@@ -24,7 +24,7 @@ pipeline {
         stage('Checkout Kubernetes Configurations') {
             steps {
                 dir('kubernetes-config') {
-                    git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-DEV-REPO.git'
+                    git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-DEV-REPO-AWS.git'
                 }
             }
         }
