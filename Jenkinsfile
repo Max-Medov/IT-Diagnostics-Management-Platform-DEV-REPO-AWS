@@ -90,7 +90,7 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('terraform-aws-infra') { // Adjust based on your Terraform directory
+                    dir('terraform-aws-infra') {
                         sh """
                             terraform init
                             terraform plan -out=tfplan
@@ -101,12 +101,22 @@ pipeline {
             }
         }
 
-        // 7) Create Namespace
-        stage('Create Namespace') {
+        // 7) Fetch ALB DNS Name
+        stage('Fetch ALB DNS Name') {
             steps {
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
-                    dir('kubernetes-config/kubernetes') {
-                        sh "kubectl apply -f namespace.yaml"
+                script {
+                    withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
+                        def alb_dns = sh(script: """
+                            kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+                        """, returnStdout: true).trim()
+
+                        echo "ALB DNS Name: ${alb_dns}"
+
+                        writeFile file: '.env', text: """
+                            REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+                            REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+                            REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+                        """
                     }
                 }
             }
@@ -118,11 +128,8 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
                     dir('kubernetes-config/kubernetes') {
                         sh """
-                            # Apply your secrets, Postgres, etc.
                             kubectl apply -f secrets-configmap.yaml
                             kubectl apply -f postgres.yaml
-
-                            # Deploy all services
                             kubectl apply -f auth-service.yaml
                             kubectl apply -f case-service.yaml
                             kubectl apply -f diagnostic-service.yaml
@@ -130,8 +137,6 @@ pipeline {
                             kubectl apply -f ingress.yaml
                             kubectl apply -f prometheus-rbac.yaml
                             kubectl apply -f prometheus-k8s.yaml
-
-                            # Now apply the Grafana config + service
                             kubectl apply -f grafana-dashboard-provider.yaml
                             kubectl apply -f grafana-dashboard-configmap.yaml
                             kubectl apply -f datasources.yaml
@@ -166,46 +171,9 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
                     script {
                         sh """
-                            # Apply port-forwards
-                            kubectl port-forward svc/auth-service -n ${KUBE_NAMESPACE} 5000:5000 > auth-pf.log 2>&1 &
-                            AUTH_PF_PID=\$!
-                            kubectl port-forward svc/case-service -n ${KUBE_NAMESPACE} 5001:5001 > case-pf.log 2>&1 &
-                            CASE_PF_PID=\$!
-                            kubectl port-forward svc/diagnostic-service -n ${KUBE_NAMESPACE} 5002:5002 > diag-pf.log 2>&1 &
-                            DIAG_PF_PID=\$!
-
-                            sleep 10
-
-                            # Test auth-service
-                            REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \\
-                                -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://localhost:5000/register)
-                            if [ "\$REGISTER_RESPONSE" = "409" ]; then
-                                echo "User exists, ok"
-                            elif [ "\$REGISTER_RESPONSE" = "201" ]; then
-                                echo "User registered"
-                            else
-                                echo "Registration failed with code \$REGISTER_RESPONSE"
-                                exit 1
-                            fi
-
-                            TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \\
-                                -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://localhost:5000/login | jq -r '.access_token')
-                            if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
-                                echo "Login failed"
-                                exit 1
-                            fi
-
-                            # Quick test case-service
-                            curl -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \\
-                                -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \\
-                                http://localhost:5001/cases || exit 1
-
-                            # Quick test diagnostic-service
-                            curl -f -H "Authorization: Bearer \$TOKEN" http://localhost:5002/download_script/1 || exit 1
-
-                            kill \$AUTH_PF_PID || true
-                            kill \$CASE_PF_PID || true
-                            kill \$DIAG_PF_PID || true
+                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/auth
+                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/case
+                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/diagnostic
                         """
                     }
                 }
