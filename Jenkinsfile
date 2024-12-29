@@ -133,7 +133,8 @@ pipeline {
                 ]]) {
                     dir('terraform/terraform-aws-infra') {
                         sh """
-                            ls -l
+                            pwd
+                            ls -R
                             terraform init
                             terraform plan -out=tfplan
                             terraform apply -auto-approve tfplan
