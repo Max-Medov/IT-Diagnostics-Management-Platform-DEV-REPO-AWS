@@ -11,6 +11,7 @@ pipeline {
         CLUSTER_NAME = "eks-cluster-name"
         TEST_USER = "testuser"
         TEST_PASS = "testpass"
+        S3_BUCKET = "max-terraform-state-bucket"
     }
 
     stages {
@@ -82,7 +83,30 @@ pipeline {
             }
         }
 
-        // 6) Apply Terraform Configuration
+        // 6) Setup S3 Backend Bucket
+        stage('Setup Backend for Terraform') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        // Create S3 bucket if it doesn't exist
+                        sh """
+                            if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
+                                aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
+                                aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
+                                aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+                            fi
+                        """
+                    }
+                }
+            }
+        }
+
+        // 7) Apply Terraform Configuration
         stage('Apply Terraform') {
             steps {
                 withCredentials([[
@@ -91,7 +115,7 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('terraform-aws-infra') {
+                    dir('IT-Diagnostics-Management-Platform-DEV-REPO-AWS/terraform/terraform-aws-infra') {
                         sh """
                             terraform init
                             terraform plan -out=tfplan
@@ -102,7 +126,7 @@ pipeline {
             }
         }
 
-        // 7) Fetch ALB DNS Name
+        // 8) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
             steps {
                 script {
@@ -119,7 +143,7 @@ pipeline {
             }
         }
 
-        // 8) Deploy to Kubernetes
+        // 9) Deploy to Kubernetes
         stage('Deploy to Kubernetes') {
             steps {
                 sh """
@@ -137,22 +161,6 @@ pipeline {
                     kubectl apply -f datasources.yaml
                     kubectl apply -f grafana.yaml
                 """
-            }
-        }
-
-        // 9) Wait for Pods
-        stage('Wait for Pods') {
-            steps {
-                script {
-                    sh """
-                        kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
-                        kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
-                        kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
-                        kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-                        kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
-                        kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
-                    """
-                }
             }
         }
 
