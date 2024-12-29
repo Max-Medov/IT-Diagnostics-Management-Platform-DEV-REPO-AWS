@@ -1,5 +1,4 @@
 pipeline {
-
     agent any
 
     environment {
@@ -102,8 +101,10 @@ pipeline {
                                 else
                                     aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
                                 fi
+
                                 # Enable versioning
                                 aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
+
                                 # Enable server-side encryption
                                 aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{
                                     "Rules": [
@@ -132,24 +133,77 @@ pipeline {
                 ]]) {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
+                            # Step 1: Apply Terraform
                             terraform init
-                            terraform destroy -auto-approve
+                            terraform plan -out=tfplan
+                            terraform apply -auto-approve tfplan
+                            
+                            # Step 2: Update kubeconfig dynamically
+                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
+                            
+                            # Step 3: Verify cluster connectivity
+                            kubectl cluster-info
+                            kubectl get nodes
                         """
                     }
                 }
             }
         }
 
-        // 8) Fetch ALB DNS Name
-        stage('Fetch ALB DNS Name') {
+	// 8) Fetch ALB DNS Name
+	stage('Fetch ALB DNS Name') {
+	    steps {
+		script {
+		    // Retrieve ALB DNS Name dynamically
+		    def alb_dns = sh(script: """
+		        kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+		    """, returnStdout: true).trim()
+
+		    echo "ALB DNS Name: ${alb_dns}"
+
+		    // Write the DNS name to .env file for React configuration
+		    writeFile file: '.env', text: """
+		        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+		        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+		        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+		    """
+		}
+	    }
+	}
+
+	stage('Deploy to Kubernetes') {
+	    steps {
+		dir('AWS-DEV/kubernetes') { // Updated path
+		    sh """
+		        kubectl apply -f secrets-configmap.yaml
+		        kubectl apply -f postgres.yaml
+		        kubectl apply -f auth-service.yaml
+		        kubectl apply -f case-service.yaml
+		        kubectl apply -f diagnostic-service.yaml
+		        kubectl apply -f frontend.yaml
+		        kubectl apply -f ingress.yaml
+		        kubectl apply -f prometheus-rbac.yaml
+		        kubectl apply -f prometheus-k8s.yaml
+		        kubectl apply -f grafana-dashboard-provider.yaml
+		        kubectl apply -f grafana-dashboard-configmap.yaml
+		        kubectl apply -f datasources.yaml
+		        kubectl apply -f grafana.yaml
+		    """
+		}
+	    }
+	}
+
+        // 10) Integration Tests
+        stage('Integration Tests') {
             steps {
                 script {
                     def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    echo "ALB DNS Name: ${alb_dns}"
-                    writeFile file: '.env', text: """
-                        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-                        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-                        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+                    echo "Testing against ALB DNS: ${alb_dns}"
+
+                    sh """
+                        curl -I http://${alb_dns}/auth
+                        curl -I http://${alb_dns}/case
+                        curl -I http://${alb_dns}/diagnostic
                     """
                 }
             }
@@ -161,20 +215,7 @@ pipeline {
             echo 'Pipeline completed successfully!'
         }
         failure {
-            echo 'Pipeline failed! Destroying all Terraform resources...'
-            withCredentials([[
-                $class: 'AmazonWebServicesCredentialsBinding',
-                credentialsId: 'aws-credentials-id',
-                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-            ]]) {
-                dir('AWS-DEV/terraform/terraform-aws-infra') {
-                    sh """
-                        terraform init
-                        terraform destroy -auto-approve
-                    """
-                }
-            }
+            echo 'Some stage failed. Check logs.'
         }
         always {
             cleanWs()
