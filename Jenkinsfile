@@ -210,31 +210,29 @@ pipeline {
         }
     }
 
-post {
-    success {
-	echo 'Pipeline completed successfully!'
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Some stage failed. Check logs.'
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-credentials-id',
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+            ]]) {
+                dir('AWS-DEV/terraform/terraform-aws-infra') {
+                    sh """
+                        terraform init
+                        terraform destroy -auto-approve
+                    """
+                }
+            }
+        }
+        always {
+            cleanWs()
+        }
     }
-    failure {
-	echo 'Pipeline failed! Destroying all Terraform resources...'
-	
-	// Destroy Terraform resources if the pipeline fails
-	withCredentials([[
-	    $class: 'AmazonWebServicesCredentialsBinding',
-	    credentialsId: 'aws-credentials-id',
-	    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-	    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-	]]) {
-	    dir('AWS-DEV/terraform/terraform-aws-infra') {
-	        sh """
-	            terraform init
-	            terraform destroy -auto-approve
-	        """
-	    }
-	}
-    }
-    always {
-	cleanWs() // Clean up workspace regardless of success or failure
-    }
-}
 
 
