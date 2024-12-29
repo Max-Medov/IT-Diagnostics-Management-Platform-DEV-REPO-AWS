@@ -7,7 +7,8 @@ pipeline {
         DOCKER_ORG = "maxmedov"
         IMAGE_PREFIX = "it-diagnostics-management-platform"
         KUBE_NAMESPACE = "it-diagnostics"
-        KUBECONFIG_CREDENTIALS_ID = "kubeconfig-credentials-id-aws"
+        AWS_REGION = "us-east-1"
+        CLUSTER_NAME = "eks-cluster-name"
         TEST_USER = "testuser"
         TEST_PASS = "testpass"
     }
@@ -105,19 +106,15 @@ pipeline {
         stage('Fetch ALB DNS Name') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
-                        def alb_dns = sh(script: """
-                            kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
-                        """, returnStdout: true).trim()
+                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
 
-                        echo "ALB DNS Name: ${alb_dns}"
+                    echo "ALB DNS Name: ${alb_dns}"
 
-                        writeFile file: '.env', text: """
-                            REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-                            REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-                            REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-                        """
-                    }
+                    writeFile file: '.env', text: """
+                        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+                        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+                        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+                    """
                 }
             }
         }
@@ -125,42 +122,36 @@ pipeline {
         // 8) Deploy to Kubernetes
         stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
-                    dir('kubernetes-config/kubernetes') {
-                        sh """
-                            kubectl apply -f secrets-configmap.yaml
-                            kubectl apply -f postgres.yaml
-                            kubectl apply -f auth-service.yaml
-                            kubectl apply -f case-service.yaml
-                            kubectl apply -f diagnostic-service.yaml
-                            kubectl apply -f frontend.yaml
-                            kubectl apply -f ingress.yaml
-                            kubectl apply -f prometheus-rbac.yaml
-                            kubectl apply -f prometheus-k8s.yaml
-                            kubectl apply -f grafana-dashboard-provider.yaml
-                            kubectl apply -f grafana-dashboard-configmap.yaml
-                            kubectl apply -f datasources.yaml
-                            kubectl apply -f grafana.yaml
-                        """
-                    }
-                }
+                sh """
+                    kubectl apply -f secrets-configmap.yaml
+                    kubectl apply -f postgres.yaml
+                    kubectl apply -f auth-service.yaml
+                    kubectl apply -f case-service.yaml
+                    kubectl apply -f diagnostic-service.yaml
+                    kubectl apply -f frontend.yaml
+                    kubectl apply -f ingress.yaml
+                    kubectl apply -f prometheus-rbac.yaml
+                    kubectl apply -f prometheus-k8s.yaml
+                    kubectl apply -f grafana-dashboard-provider.yaml
+                    kubectl apply -f grafana-dashboard-configmap.yaml
+                    kubectl apply -f datasources.yaml
+                    kubectl apply -f grafana.yaml
+                """
             }
         }
 
         // 9) Wait for Pods
         stage('Wait for Pods') {
             steps {
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
-                    script {
-                        sh """
-                            kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
-                            kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
-                            kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
-                            kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-                            kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
-                            kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
-                        """
-                    }
+                script {
+                    sh """
+                        kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
+                        kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
+                        kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+                        kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                        kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
+                        kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+                    """
                 }
             }
         }
@@ -168,14 +159,15 @@ pipeline {
         // 10) Integration Tests
         stage('Integration Tests') {
             steps {
-                withCredentials([file(credentialsId: "${KUBECONFIG_CREDENTIALS_ID}", variable: 'KUBECONFIG')]) {
-                    script {
-                        sh """
-                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/auth
-                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/case
-                            curl -I http://\$(kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')/diagnostic
-                        """
-                    }
+                script {
+                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                    echo "Testing against ALB DNS: ${alb_dns}"
+
+                    sh """
+                        curl -I http://${alb_dns}/auth
+                        curl -I http://${alb_dns}/case
+                        curl -I http://${alb_dns}/diagnostic
+                    """
                 }
             }
         }
