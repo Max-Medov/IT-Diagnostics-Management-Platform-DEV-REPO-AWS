@@ -25,7 +25,7 @@ pipeline {
         // 2) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
-                dir('kubernetes-config') {
+                dir('AWS-DEV') {
                     git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-DEV-REPO-AWS.git'
                 }
             }
@@ -131,7 +131,7 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('terraform/terraform-aws-infra') {
+                    dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
                             pwd
                             ls -R
@@ -161,26 +161,27 @@ pipeline {
             }
         }
 
-        // 9) Deploy to Kubernetes
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh """
-                    kubectl apply -f secrets-configmap.yaml
-                    kubectl apply -f postgres.yaml
-                    kubectl apply -f auth-service.yaml
-                    kubectl apply -f case-service.yaml
-                    kubectl apply -f diagnostic-service.yaml
-                    kubectl apply -f frontend.yaml
-                    kubectl apply -f ingress.yaml
-                    kubectl apply -f prometheus-rbac.yaml
-                    kubectl apply -f prometheus-k8s.yaml
-                    kubectl apply -f grafana-dashboard-provider.yaml
-                    kubectl apply -f grafana-dashboard-configmap.yaml
-                    kubectl apply -f datasources.yaml
-                    kubectl apply -f grafana.yaml
-                """
-            }
-        }
+	stage('Deploy to Kubernetes') {
+	    steps {
+		dir('AWS-DEV/kubernetes') { // Updated path
+		    sh """
+		        kubectl apply -f secrets-configmap.yaml
+		        kubectl apply -f postgres.yaml
+		        kubectl apply -f auth-service.yaml
+		        kubectl apply -f case-service.yaml
+		        kubectl apply -f diagnostic-service.yaml
+		        kubectl apply -f frontend.yaml
+		        kubectl apply -f ingress.yaml
+		        kubectl apply -f prometheus-rbac.yaml
+		        kubectl apply -f prometheus-k8s.yaml
+		        kubectl apply -f grafana-dashboard-provider.yaml
+		        kubectl apply -f grafana-dashboard-configmap.yaml
+		        kubectl apply -f datasources.yaml
+		        kubectl apply -f grafana.yaml
+		    """
+		}
+	    }
+	}
 
         // 10) Integration Tests
         stage('Integration Tests') {
