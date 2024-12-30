@@ -149,7 +149,47 @@ pipeline {
             }
         }
 
-        // 8) Fetch ALB DNS Name
+        // 8) Deploy Initial Kubernetes Resources
+        stage('Deploy Initial Kubernetes Resources') {
+            steps {
+                dir('AWS-DEV/kubernetes') {
+                    sh """
+                        kubectl apply -f namespace.yaml
+                        kubectl apply -f secrets-configmap.yaml
+                        kubectl apply -f postgres.yaml
+                        kubectl apply -f auth-service.yaml
+                        kubectl apply -f case-service.yaml
+                        kubectl apply -f diagnostic-service.yaml
+                        kubectl apply -f frontend.yaml
+                        kubectl apply -f prometheus-rbac.yaml
+                        kubectl apply -f prometheus-k8s.yaml
+                        kubectl apply -f grafana-dashboard-provider.yaml
+                        kubectl apply -f grafana-dashboard-configmap.yaml
+                        kubectl apply -f datasources.yaml
+                        kubectl apply -f grafana.yaml
+                    """
+                }
+                // Apply prometheus configuration from monitoring directory
+                dir('AWS-DEV/monitoring') {
+                    sh """
+                        kubectl apply -f prometheus.yml
+                    """
+                }
+            }
+        }
+
+        // 9) Deploy Ingress
+        stage('Deploy Ingress') {
+            steps {
+                dir('AWS-DEV/kubernetes') {
+                    sh """
+                        kubectl apply -f ingress.yaml
+                    """
+                }
+            }
+        }
+
+        // 10) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
             steps {
                 withCredentials([[
@@ -190,30 +230,7 @@ EOF
             }
         }
 
-        // 9) Deploy to Kubernetes
-        stage('Deploy to Kubernetes') {
-            steps {
-                dir('AWS-DEV/kubernetes') {
-                    sh """
-                        kubectl apply -f secrets-configmap.yaml
-                        kubectl apply -f postgres.yaml
-                        kubectl apply -f auth-service.yaml
-                        kubectl apply -f case-service.yaml
-                        kubectl apply -f diagnostic-service.yaml
-                        kubectl apply -f frontend.yaml
-                        kubectl apply -f ingress.yaml
-                        kubectl apply -f prometheus-rbac.yaml
-                        kubectl apply -f prometheus-k8s.yaml
-                        kubectl apply -f grafana-dashboard-provider.yaml
-                        kubectl apply -f grafana-dashboard-configmap.yaml
-                        kubectl apply -f datasources.yaml
-                        kubectl apply -f grafana.yaml
-                    """
-                }
-            }
-        }
-
-        // 10) Integration Tests
+        // 11) Integration Tests
         stage('Integration Tests') {
             steps {
                 script {
