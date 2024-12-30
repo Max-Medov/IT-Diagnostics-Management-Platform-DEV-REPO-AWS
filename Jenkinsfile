@@ -15,6 +15,7 @@ pipeline {
         S3_BUCKET = "max-terraform-state-bucket"
     }
 
+    stages {
         // 1) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
@@ -24,27 +25,22 @@ pipeline {
             }
         }
 
-      
-
         // 2) Apply Terraform Configuration
-        stage('Apply Terraform') {
+        stage('Destroy Terraform') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
+                withCredentials([
+                    aws(credentialsId: 'aws-credentials-id', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
-                        sh """
+                        sh '''
                             terraform init
                             terraform destroy -auto-approve
-                        """
+                        '''
                     }
                 }
             }
         }
-
+    }
 
     post {
         success {
@@ -52,17 +48,14 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed! Destroying all Terraform resources...'
-            withCredentials([[
-                $class: 'AmazonWebServicesCredentialsBinding',
-                credentialsId: 'aws-credentials-id',
-                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-            ]]) {
+            withCredentials([
+                aws(credentialsId: 'aws-credentials-id', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
                 dir('AWS-DEV/terraform/terraform-aws-infra') {
-                    sh """
+                    sh '''
                         terraform init
                         terraform destroy -auto-approve
-                    """
+                    '''
                 }
             }
         }
