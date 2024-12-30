@@ -93,7 +93,6 @@ pipeline {
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
                     script {
-                        // Create S3 bucket if it doesn't exist
                         sh """
                             if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
                                 if [ \"${AWS_REGION}\" = \"us-east-1\" ]; then
@@ -150,54 +149,69 @@ pipeline {
             }
         }
 
-	// 8) Fetch ALB DNS Name
-	stage('Fetch ALB DNS Name') {
-	    steps {
-	        withCredentials([[
-	            $class: 'AmazonWebServicesCredentialsBinding',
-	            credentialsId: 'aws-credentials-id',
-	            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-	            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-	        ]]) {
-		script {
-		    // Retrieve ALB DNS Name dynamically
-		    def alb_dns = sh(script: """
-		        kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
-		    """, returnStdout: true).trim()
+        // 8) Fetch ALB DNS Name
+        stage('Fetch ALB DNS Name') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        def alb_dns = ""
+                        timeout(time: 300, unit: 'SECONDS') {
+                            while (alb_dns == "") {
+                                echo "Waiting for ALB DNS Name..."
+                                sleep 10
+                                try {
+                                    alb_dns = sh(
+                                        script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'",
+                                        returnStdout: true
+                                    ).trim()
+                                } catch (Exception e) {
+                                    echo "Failed to fetch ALB DNS, retrying..."
+                                }
+                            }
+                        }
+                        
+                        echo "ALB DNS Name: ${alb_dns}"
+                        
+                        // Write DNS name to the .env file
+                        sh """
+                            cat << EOF > .env
+REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
+REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
+REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
+EOF
+                        """
+                    }
+                }
+            }
+        }
 
-		    echo "ALB DNS Name: ${alb_dns}"
-
-		    // Write the DNS name to .env file for React configuration
-		    writeFile file: '.env', text: """
-		        REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-		        REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-		        REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-		    """
-		}
-	    }
-	}
-
-	stage('Deploy to Kubernetes') {
-	    steps {
-		dir('AWS-DEV/kubernetes') { // Updated path
-		    sh """
-		        kubectl apply -f secrets-configmap.yaml
-		        kubectl apply -f postgres.yaml
-		        kubectl apply -f auth-service.yaml
-		        kubectl apply -f case-service.yaml
-		        kubectl apply -f diagnostic-service.yaml
-		        kubectl apply -f frontend.yaml
-		        kubectl apply -f ingress.yaml
-		        kubectl apply -f prometheus-rbac.yaml
-		        kubectl apply -f prometheus-k8s.yaml
-		        kubectl apply -f grafana-dashboard-provider.yaml
-		        kubectl apply -f grafana-dashboard-configmap.yaml
-		        kubectl apply -f datasources.yaml
-		        kubectl apply -f grafana.yaml
-		    """
-		}
-	    }
-	}
+        // 9) Deploy to Kubernetes
+        stage('Deploy to Kubernetes') {
+            steps {
+                dir('AWS-DEV/kubernetes') {
+                    sh """
+                        kubectl apply -f secrets-configmap.yaml
+                        kubectl apply -f postgres.yaml
+                        kubectl apply -f auth-service.yaml
+                        kubectl apply -f case-service.yaml
+                        kubectl apply -f diagnostic-service.yaml
+                        kubectl apply -f frontend.yaml
+                        kubectl apply -f ingress.yaml
+                        kubectl apply -f prometheus-rbac.yaml
+                        kubectl apply -f prometheus-k8s.yaml
+                        kubectl apply -f grafana-dashboard-provider.yaml
+                        kubectl apply -f grafana-dashboard-configmap.yaml
+                        kubectl apply -f datasources.yaml
+                        kubectl apply -f grafana.yaml
+                    """
+                }
+            }
+        }
 
         // 10) Integration Tests
         stage('Integration Tests') {
@@ -228,4 +242,3 @@ pipeline {
         }
     }
 }
-
