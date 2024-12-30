@@ -1,5 +1,4 @@
 pipeline {
-
     agent any
 
     environment {
@@ -16,7 +15,14 @@ pipeline {
     }
 
     stages {
-        // 1) Checkout dev repo for Kubernetes YAML
+        // 1) Checkout main code
+        stage('Checkout Application Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Max-Medov/IT-Diagnostics-Management-Platform-AWS.git'
+            }
+        }
+
+        // 2) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
                 dir('AWS-DEV') {
@@ -25,17 +31,245 @@ pipeline {
             }
         }
 
-        // 2) Apply Terraform Configuration
-        stage('Destroy Terraform') {
+        // 3) Build Docker Images
+        stage('Build Docker Images') {
             steps {
-                withCredentials([
-                    aws(credentialsId: 'aws-credentials-id', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
+                script {
+                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:auth_service -f backend/auth_service/Dockerfile backend"
+                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:case_service -f backend/case_service/Dockerfile backend"
+                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:diagnostic_service -f backend/diagnostic_service/Dockerfile backend"
+                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend -f frontend/Dockerfile frontend"
+                }
+            }
+        }
+
+        // 4) Pre-Push Minimal Sanity Tests
+        stage('Pre-Push Minimal Sanity Tests') {
+            steps {
+                script {
+                    def services = ['auth_service', 'case_service', 'diagnostic_service', 'frontend']
+                    for (service in services) {
+                        echo "Running sanity test for ${service}"
+                        sh """
+                            docker run -d --name test_${service} ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:${service}
+                            sleep 10
+                        """
+                        def running = sh(script: """
+                            docker ps --filter name=test_${service} --filter status=running | grep test_${service} || true
+                        """, returnStatus: true)
+                        if (running != 0) {
+                            sh "docker rm -f test_${service}"
+                            error("Pre-push sanity test failed for ${service}")
+                        } else {
+                            sh "docker rm -f test_${service}"
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5) Push Docker Images
+        stage('Push Images to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        echo ${DOCKER_PASS} | docker login ${REGISTRY} -u ${DOCKER_USER} --password-stdin
+                        docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:auth_service
+                        docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:case_service
+                        docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:diagnostic_service
+                        docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend
+                    """
+                }
+            }
+        }
+
+        // 6) Setup S3 Backend Bucket
+        stage('Setup Backend for Terraform') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            if ! aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null; then
+                                if [ \"${AWS_REGION}\" = \"us-east-1\" ]; then
+                                    aws s3api create-bucket --bucket ${S3_BUCKET}
+                                else
+                                    aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
+                                fi
+
+                                # Enable versioning
+                                aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
+
+                                # Enable server-side encryption
+                                aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{
+                                    "Rules": [
+                                        {
+                                            "ApplyServerSideEncryptionByDefault": {
+                                                "SSEAlgorithm": "AES256"
+                                            }
+                                        }
+                                    ]
+                                }'
+                            fi
+                        """
+                    }
+                }
+            }
+        }
+
+        // 7) Apply Terraform Configuration
+        stage('Apply Terraform') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
-                        sh '''
+                        sh """
+                            # Step 1: Apply Terraform
                             terraform init
-                            terraform destroy -auto-approve
-                        '''
+                            terraform plan -out=tfplan
+                            terraform apply -auto-approve tfplan
+                            
+                            # Step 2: Update kubeconfig dynamically
+                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
+                            
+                            # Step 3: Verify cluster connectivity
+                            kubectl cluster-info
+                            kubectl get nodes
+                        """
+                    }
+                }
+            }
+        }
+
+        // 8) Deploy Kubernetes Resources
+        stage('Deploy Kubernetes Resources') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir('AWS-DEV/kubernetes') {
+                        sh """
+                            kubectl apply -f namespace.yaml
+                            kubectl apply -f secrets-configmap.yaml
+                            kubectl apply -f postgres.yaml
+                            kubectl apply -f auth-service.yaml
+                            kubectl apply -f case-service.yaml
+                            kubectl apply -f diagnostic-service.yaml
+                            kubectl apply -f frontend.yaml
+                            kubectl apply -f prometheus-rbac.yaml
+                            kubectl apply -f prometheus-k8s.yaml
+                            kubectl apply -f grafana-dashboard-provider.yaml
+                            kubectl apply -f grafana-dashboard-configmap.yaml
+                            kubectl apply -f datasources.yaml
+                            kubectl apply -f grafana.yaml
+                            kubectl apply -f ingress.yaml
+                        """
+                    }
+                }
+            }
+        }
+
+        // 9) Fetch ALB DNS Name
+        stage('Fetch ALB DNS Name') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        def alb_dns = ""
+                        timeout(time: 300, unit: 'SECONDS') {
+                            while (alb_dns == "") {
+                                echo "Waiting for ALB DNS Name..."
+                                sleep 10
+                                try {
+                                    alb_dns = sh(
+                                        script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'",
+                                        returnStdout: true
+                                    ).trim()
+                                } catch (Exception e) {
+                                    echo "Failed to fetch ALB DNS, retrying..."
+                                }
+                            }
+                        }
+                        
+                        echo "ALB DNS Name: ${alb_dns}"
+                        env.ALB_DNS = alb_dns // Export ALB DNS for later use
+                    }
+                }
+            }
+        }
+
+        // 10) Integration Tests
+        stage('Integration Tests') {
+            steps {
+                script {
+                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                    echo "Testing against ALB DNS: ${alb_dns}"
+
+                    sh """
+                        curl -I http://${alb_dns}/auth
+                        curl -I http://${alb_dns}/case
+                        curl -I http://${alb_dns}/diagnostic
+                    """
+                }
+            }
+        }
+
+        // 11) Build Frontend Docker Image with Dynamic DNS
+        stage('Rebuild Frontend with ALB DNS') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            docker build \\
+                            --build-arg REACT_APP_AUTH_SERVICE_URL=http://${env.ALB_DNS}/auth \\
+                            --build-arg REACT_APP_CASE_SERVICE_URL=http://${env.ALB_DNS}/case \\
+                            --build-arg REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${env.ALB_DNS}/diagnostic \\
+                            -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend \\
+                            -f frontend/Dockerfile frontend
+                        """
+                        sh """
+                            echo ${DOCKER_PASS} | docker login ${REGISTRY} -u ${DOCKER_USER} --password-stdin
+                            docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend
+                        """
+                    }
+                }
+            }
+        }
+
+        // 12) Update Kubernetes Deployment with New Frontend Image
+        stage('Deploy Updated Frontend') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            kubectl set image deployment/frontend frontend=${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend -n ${KUBE_NAMESPACE}
+                            kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                        """
                     }
                 }
             }
@@ -47,21 +281,10 @@ pipeline {
             echo 'Pipeline completed successfully!'
         }
         failure {
-            echo 'Pipeline failed! Destroying all Terraform resources...'
-            withCredentials([
-                aws(credentialsId: 'aws-credentials-id', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
-            ]) {
-                dir('AWS-DEV/terraform/terraform-aws-infra') {
-                    sh '''
-                        terraform init
-                        terraform destroy -auto-approve
-                    '''
-                }
-            }
+            echo 'Some stage failed. Check logs.'
         }
         always {
             cleanWs()
         }
     }
 }
-

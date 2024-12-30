@@ -31,16 +31,16 @@ module "eks" {
   enable_irsa = true
 
   eks_managed_node_group_defaults = {
-    instance_type = "t3.small"
+    instance_type = "t3.medium"
   }
 
   eks_managed_node_groups = {
     default = {
       ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = ["t3.small"]
-      min_size       = 2
-      desired_size   = 3
-      max_size       = 4
+      instance_types = ["t3.medium"]
+      min_size       = 1
+      desired_size   = 2
+      max_size       = 3
 
       key_name = "MyKeyPair"
     }
