@@ -167,6 +167,7 @@ pipeline {
                             kubectl apply -f case-service.yaml
                             kubectl apply -f diagnostic-service.yaml
                             kubectl apply -f frontend.yaml
+                            kubectl apply -f prometheus.yaml
                             kubectl apply -f prometheus-rbac.yaml
                             kubectl apply -f prometheus-k8s.yaml
                             kubectl apply -f grafana-dashboard-provider.yaml
@@ -174,12 +175,6 @@ pipeline {
                             kubectl apply -f datasources.yaml
                             kubectl apply -f grafana.yaml
                             kubectl apply -f ingress.yaml
-                        """
-                    }
-                    // Apply prometheus configuration from monitoring directory
-                    dir('AWS-DEV/monitoring') {
-                        sh """
-                            kubectl apply -f prometheus.yaml
                         """
                     }
                 }
