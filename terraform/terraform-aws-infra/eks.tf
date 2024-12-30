@@ -31,7 +31,7 @@ module "eks" {
   enable_irsa = true
 
   eks_managed_node_group_defaults = {
-    instance_type = "t3.micro"
+    instance_type = "t3.small"
   }
 
   eks_managed_node_groups = {
