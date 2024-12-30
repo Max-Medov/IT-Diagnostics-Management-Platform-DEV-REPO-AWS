@@ -179,7 +179,7 @@ pipeline {
                     // Apply prometheus configuration from monitoring directory
                     dir('AWS-DEV/monitoring') {
                         sh """
-                            kubectl apply -f prometheus.yml
+                            kubectl apply -f prometheus.yaml
                         """
                     }
                 }
