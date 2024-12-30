@@ -16,6 +16,7 @@ pipeline {
     }
 
     stages {
+
         // 1) Checkout dev repo for Kubernetes YAML
         stage('Checkout Kubernetes Configurations') {
             steps {
