@@ -16,10 +16,22 @@ module "vpc" {
   enable_nat_gateway   = true
   single_nat_gateway   = true
 
+  # Base tags for the VPC and all sub-resources
   tags = {
     Name        = "eks-vpc"
     Terraform   = "true"
     Environment = "dev"
   }
+
+  public_subnet_tags = {
+    "kubernetes.io/cluster/eks-max-project" = "shared"
+    "kubernetes.io/role/elb"               = "1"
+  }
+
+  # Optionally, if you have internal ALBs:
+  # private_subnet_tags = {
+  #   "kubernetes.io/cluster/eks-max-project" = "shared"
+  #   "kubernetes.io/role/internal-elb"       = "1"
+  # }
 }
 
