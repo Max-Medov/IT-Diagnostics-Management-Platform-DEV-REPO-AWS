@@ -149,47 +149,45 @@ pipeline {
             }
         }
 
-        // 8) Deploy Initial Kubernetes Resources
-        stage('Deploy Initial Kubernetes Resources') {
+        // 8) Deploy Kubernetes Resources
+        stage('Deploy Kubernetes Resources') {
             steps {
-                dir('AWS-DEV/kubernetes') {
-                    sh """
-                        kubectl apply -f namespace.yaml
-                        kubectl apply -f secrets-configmap.yaml
-                        kubectl apply -f postgres.yaml
-                        kubectl apply -f auth-service.yaml
-                        kubectl apply -f case-service.yaml
-                        kubectl apply -f diagnostic-service.yaml
-                        kubectl apply -f frontend.yaml
-                        kubectl apply -f prometheus-rbac.yaml
-                        kubectl apply -f prometheus-k8s.yaml
-                        kubectl apply -f grafana-dashboard-provider.yaml
-                        kubectl apply -f grafana-dashboard-configmap.yaml
-                        kubectl apply -f datasources.yaml
-                        kubectl apply -f grafana.yaml
-                    """
-                }
-                // Apply prometheus configuration from monitoring directory
-                dir('AWS-DEV/monitoring') {
-                    sh """
-                        kubectl apply -f prometheus.yml
-                    """
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    dir('AWS-DEV/kubernetes') {
+                        sh """
+                            kubectl apply -f namespace.yaml
+                            kubectl apply -f secrets-configmap.yaml
+                            kubectl apply -f postgres.yaml
+                            kubectl apply -f auth-service.yaml
+                            kubectl apply -f case-service.yaml
+                            kubectl apply -f diagnostic-service.yaml
+                            kubectl apply -f frontend.yaml
+                            kubectl apply -f prometheus-rbac.yaml
+                            kubectl apply -f prometheus-k8s.yaml
+                            kubectl apply -f grafana-dashboard-provider.yaml
+                            kubectl apply -f grafana-dashboard-configmap.yaml
+                            kubectl apply -f datasources.yaml
+                            kubectl apply -f grafana.yaml
+                            kubectl apply -f ingress.yaml
+                        """
+                    }
+                    // Apply prometheus configuration from monitoring directory
+                    dir('AWS-DEV/monitoring') {
+                        sh """
+                            kubectl apply -f prometheus.yml
+                        """
+                    }
                 }
             }
         }
 
-        // 9) Deploy Ingress
-        stage('Deploy Ingress') {
-            steps {
-                dir('AWS-DEV/kubernetes') {
-                    sh """
-                        kubectl apply -f ingress.yaml
-                    """
-                }
-            }
-        }
 
-        // 10) Fetch ALB DNS Name
+        // 9) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
             steps {
                 withCredentials([[
@@ -230,7 +228,7 @@ EOF
             }
         }
 
-        // 11) Integration Tests
+        // 10) Integration Tests
         stage('Integration Tests') {
             steps {
                 script {
