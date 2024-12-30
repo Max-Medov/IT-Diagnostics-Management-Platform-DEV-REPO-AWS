@@ -153,6 +153,12 @@ pipeline {
 	// 8) Fetch ALB DNS Name
 	stage('Fetch ALB DNS Name') {
 	    steps {
+	        withCredentials([[
+	            $class: 'AmazonWebServicesCredentialsBinding',
+	            credentialsId: 'aws-credentials-id',
+	            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+	            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+	        ]]) {
 		script {
 		    // Retrieve ALB DNS Name dynamically
 		    def alb_dns = sh(script: """
