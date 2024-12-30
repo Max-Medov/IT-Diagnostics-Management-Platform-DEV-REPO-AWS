@@ -21,11 +21,11 @@ spec:
         - containerPort: 3000
         env:
         - name: REACT_APP_AUTH_SERVICE_URL
-          value: "http://auth.local"
+          value: "http://auth-service.it-diagnostics.svc.cluster.local:5000"
         - name: REACT_APP_CASE_SERVICE_URL
-          value: "http://case.local"
+          value: "http://case-service.it-diagnostics.svc.cluster.local:5001"
         - name: REACT_APP_DIAGNOSTIC_SERVICE_URL
-          value: "http://diagnostic.local"
+          value: "http://diagnostic-service.it-diagnostics.svc.cluster.local:5002"
 
 ---
 apiVersion: v1

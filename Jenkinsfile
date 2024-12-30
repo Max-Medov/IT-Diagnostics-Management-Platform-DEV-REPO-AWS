@@ -167,7 +167,6 @@ pipeline {
                             kubectl apply -f case-service.yaml
                             kubectl apply -f diagnostic-service.yaml
                             kubectl apply -f frontend.yaml
-                            kubectl apply -f prometheus.yaml
                             kubectl apply -f prometheus-rbac.yaml
                             kubectl apply -f prometheus-k8s.yaml
                             kubectl apply -f grafana-dashboard-provider.yaml
@@ -180,7 +179,6 @@ pipeline {
                 }
             }
         }
-
 
         // 9) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
@@ -209,15 +207,7 @@ pipeline {
                         }
                         
                         echo "ALB DNS Name: ${alb_dns}"
-                        
-                        // Write DNS name to the .env file
-                        sh """
-                            cat << EOF > .env
-REACT_APP_AUTH_SERVICE_URL=http://${alb_dns}/auth
-REACT_APP_CASE_SERVICE_URL=http://${alb_dns}/case
-REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${alb_dns}/diagnostic
-EOF
-                        """
+                        env.ALB_DNS = alb_dns // Export ALB DNS for later use
                     }
                 }
             }
@@ -235,6 +225,52 @@ EOF
                         curl -I http://${alb_dns}/case
                         curl -I http://${alb_dns}/diagnostic
                     """
+                }
+            }
+        }
+
+        // 11) Build Frontend Docker Image with Dynamic DNS
+        stage('Rebuild Frontend with ALB DNS') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            docker build \\
+                            --build-arg REACT_APP_AUTH_SERVICE_URL=http://${env.ALB_DNS}/auth \\
+                            --build-arg REACT_APP_CASE_SERVICE_URL=http://${env.ALB_DNS}/case \\
+                            --build-arg REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${env.ALB_DNS}/diagnostic \\
+                            -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend \\
+                            -f frontend/Dockerfile frontend
+                        """
+                        sh """
+                            echo ${DOCKER_PASS} | docker login ${REGISTRY} -u ${DOCKER_USER} --password-stdin
+                            docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend
+                        """
+                    }
+                }
+            }
+        }
+
+        // 12) Update Kubernetes Deployment with New Frontend Image
+        stage('Deploy Updated Frontend') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            kubectl set image deployment/frontend frontend=${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend -n ${KUBE_NAMESPACE}
+                            kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                        """
+                    }
                 }
             }
         }
