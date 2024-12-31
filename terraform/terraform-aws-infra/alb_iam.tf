@@ -34,8 +34,8 @@ resource "aws_iam_role" "alb_controller" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "alb_controller_elb_fullaccess" {
-  policy_arn = "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess"
+resource "aws_iam_role_policy_attachment" "alb_controller_recommended" {
+  policy_arn = "arn:aws:iam::aws:policy/AWSLoadBalancerControllerIAMPolicy"
   role       = aws_iam_role.alb_controller.name
 }
 
