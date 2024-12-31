@@ -1,3 +1,11 @@
+locals {
+  oidc_url = regexreplace(
+    module.eks.oidc_provider_arn,
+    "^arn:aws:iam::[0-9]+:oidc-provider/",
+    ""
+  )
+}
+
 # Create a policy doc for IRSA
 data "aws_iam_policy_document" "alb_controller_assume_role" {
   statement {
@@ -8,8 +16,12 @@ data "aws_iam_policy_document" "alb_controller_assume_role" {
     }
     condition {
       test     = "StringEquals"
-      variable = "${replace(module.eks.oidc_provider_arn, "arn:aws:iam::", "")}:sub"
-      values   = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
+      variable = "${local.oidc_url}:sub"
+
+      values = [
+        # Must match your SA's namespace and name
+        "system:serviceaccount:kube-system:aws-load-balancer-controller"
+      ]
     }
   }
 }
