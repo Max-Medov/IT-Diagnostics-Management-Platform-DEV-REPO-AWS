@@ -180,21 +180,31 @@ pipeline {
             }
         }
 
-        // 9) Wait for Pods
-        stage('Wait for Pods') {
-            steps {
-                script {
-                    sh """
-                      kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
-                      kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
-                      kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
-                      kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-                      # kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
-                      kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
-                    """
-                }
-            }
-        }
+	// 9) Wait for Pods
+	stage('Wait for Pods') {
+	    steps {
+		withCredentials([
+		    [
+		        $class: 'AmazonWebServicesCredentialsBinding',
+		        credentialsId: 'aws-credentials-id',
+		        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+		        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+		    ]
+		]) {
+		    script {
+		        sh """
+		          kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
+		          kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
+		          kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+		          kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+		          # kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
+		          kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+		        """
+		    }
+		}
+	    }
+	}
+
 
         // 10) Fetch ALB DNS Name (like a real user would)
         stage('Fetch ALB DNS Name') {
