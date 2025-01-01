@@ -180,33 +180,23 @@ pipeline {
             }
         }
 
-	// 9) Wait for Pods
-	stage('Wait for Pods') {
-	    steps {
-		withCredentials([
-		    [
-		        $class: 'AmazonWebServicesCredentialsBinding',
-		        credentialsId: 'aws-credentials-id',
-		        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-		        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-		    ]
-		]) {
-		    script {
-		        sh """
-		          kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-		          # kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
-		        """
-		    }
-		}
-	    }
-	}
+        // 9) Wait for Pods
+        stage('Wait for Pods') {
+            steps {
+                script {
+                    sh """
+                      kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+                    """
+                }
+            }
+        }
 
-
-        // 10) Fetch ALB DNS Name (like a real user would)
+        // 10) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
             steps {
                 withCredentials([[
@@ -239,46 +229,7 @@ pipeline {
             }
         }
 
-        // 11) Integration Tests (directly hitting the ALB)
-        stage('Integration Tests') {
-            steps {
-                script {
-                    sh """
-                      # Test auth-service: Register
-                      REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \\
-                        -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
-                      if [ "\$REGISTER_RESPONSE" = "409" ]; then
-                        echo "User already exists."
-                      elif [ "\$REGISTER_RESPONSE" = "201" ]; then
-                        echo "New user registered."
-                      else
-                        echo "Registration failed with code \$REGISTER_RESPONSE"
-                        exit 1
-                      fi
-
-                      # Test auth-service: Login -> get token
-                      TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \\
-                        -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
-                      if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
-                        echo "Login failed. No token found."
-                        exit 1
-                      fi
-
-                      # Test case-service
-                      curl -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \\
-                        -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \\
-                        http://${env.ALB_DNS}/case/cases || exit 1
-
-                      # Quick test diagnostic-service
-                      # If your code expects e.g. /diagnostic/download_script/1 
-                      # or /diagnostic/something, adjust accordingly
-                      curl -f -H "Authorization: Bearer \$TOKEN" http://${env.ALB_DNS}/diagnostic/download_script/1 || exit 1
-                    """
-                }
-            }
-        }
-
-        // 12) Rebuild Frontend with ALB DNS
+        // 11) Rebuild Frontend with ALB DNS (so the React app points to the correct backend)
         stage('Rebuild Frontend with ALB DNS') {
             steps {
                 withCredentials([[
@@ -305,7 +256,7 @@ pipeline {
             }
         }
 
-        // 13) Update Kubernetes Deployment with New Frontend Image
+        // 12) Deploy Updated Frontend
         stage('Deploy Updated Frontend') {
             steps {
                 withCredentials([[
@@ -320,6 +271,46 @@ pipeline {
                             kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
                         """
                     }
+                }
+            }
+        }
+
+        // 13) Integration Tests (Now that the new frontend is live with correct ALB endpoints)
+        stage('Integration Tests') {
+            steps {
+                script {
+                    echo "Testing against updated ALB-based frontend & backend: ${env.ALB_DNS}"
+                    sh """
+                        # Example test flows:
+                        
+                        # 1) Attempt user registration
+                        REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \\
+                           -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
+                        if [ "\$REGISTER_RESPONSE" = "409" ]; then
+                          echo "User already exists."
+                        elif [ "\$REGISTER_RESPONSE" = "201" ]; then
+                          echo "User newly registered."
+                        else
+                          echo "Registration failed with code \$REGISTER_RESPONSE"
+                          exit 1
+                        fi
+
+                        # 2) Login to get token
+                        TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \\
+                           -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
+                        if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
+                          echo "Login failed. No token returned."
+                          exit 1
+                        fi
+
+                        # 3) Test case-service endpoint
+                        curl -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \\
+                          -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \\
+                          http://${env.ALB_DNS}/case/cases || exit 1
+
+                        # 4) Test diagnostic-service endpoint
+                        curl -f -H "Authorization: Bearer \$TOKEN" http://${env.ALB_DNS}/diagnostic/download_script/1 || exit 1
+                    """
                 }
             }
         }
