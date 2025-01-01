@@ -180,7 +180,23 @@ pipeline {
             }
         }
 
-        // 9) Fetch ALB DNS Name
+        // 9) Wait for Pods
+        stage('Wait for Pods') {
+            steps {
+                script {
+                    sh """
+                      kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                      # kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
+                      kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+                    """
+                }
+            }
+        }
+
+        // 10) Fetch ALB DNS Name (like a real user would)
         stage('Fetch ALB DNS Name') {
             steps {
                 withCredentials([[
@@ -207,29 +223,52 @@ pipeline {
                         }
                         
                         echo "ALB DNS Name: ${alb_dns}"
-                        env.ALB_DNS = alb_dns // Export ALB DNS for later use
+                        env.ALB_DNS = alb_dns
                     }
                 }
             }
         }
 
-        // 10) Integration Tests
+        // 11) Integration Tests (directly hitting the ALB)
         stage('Integration Tests') {
             steps {
                 script {
-                    def alb_dns = sh(script: "kubectl get ingress -n ${KUBE_NAMESPACE} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    echo "Testing against ALB DNS: ${alb_dns}"
-
                     sh """
-                        curl -I http://${alb_dns}/auth
-                        curl -I http://${alb_dns}/case
-                        curl -I http://${alb_dns}/diagnostic
+                      # Test auth-service: Register
+                      REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \\
+                        -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
+                      if [ "\$REGISTER_RESPONSE" = "409" ]; then
+                        echo "User already exists."
+                      elif [ "\$REGISTER_RESPONSE" = "201" ]; then
+                        echo "New user registered."
+                      else
+                        echo "Registration failed with code \$REGISTER_RESPONSE"
+                        exit 1
+                      fi
+
+                      # Test auth-service: Login -> get token
+                      TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \\
+                        -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
+                      if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
+                        echo "Login failed. No token found."
+                        exit 1
+                      fi
+
+                      # Test case-service
+                      curl -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \\
+                        -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \\
+                        http://${env.ALB_DNS}/case/cases || exit 1
+
+                      # Quick test diagnostic-service
+                      # If your code expects e.g. /diagnostic/download_script/1 
+                      # or /diagnostic/something, adjust accordingly
+                      curl -f -H "Authorization: Bearer \$TOKEN" http://${env.ALB_DNS}/diagnostic/download_script/1 || exit 1
                     """
                 }
             }
         }
 
-        // 11) Build Frontend Docker Image with Dynamic DNS
+        // 12) Rebuild Frontend with ALB DNS
         stage('Rebuild Frontend with ALB DNS') {
             steps {
                 withCredentials([[
@@ -256,7 +295,7 @@ pipeline {
             }
         }
 
-        // 12) Update Kubernetes Deployment with New Frontend Image
+        // 13) Update Kubernetes Deployment with New Frontend Image
         stage('Deploy Updated Frontend') {
             steps {
                 withCredentials([[
@@ -288,3 +327,4 @@ pipeline {
         }
     }
 }
+
