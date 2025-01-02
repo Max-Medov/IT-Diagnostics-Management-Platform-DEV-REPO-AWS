@@ -15,6 +15,7 @@ pipeline {
     }
 
     stages {
+
         // 1) Checkout main code
         stage('Checkout Application Code') {
             steps {
@@ -35,10 +36,33 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:auth_service -f backend/auth_service/Dockerfile backend"
-                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:case_service -f backend/case_service/Dockerfile backend"
-                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:diagnostic_service -f backend/diagnostic_service/Dockerfile backend"
-                    sh "docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend -f frontend/Dockerfile frontend"
+                    // Build auth_service
+                    sh """
+                      docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:auth_service \
+                        -f backend/auth_service/Dockerfile backend
+                    """
+
+                    // Build case_service
+                    sh """
+                      docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:case_service \
+                        -f backend/case_service/Dockerfile backend
+                    """
+
+                    // Build diagnostic_service
+                    sh """
+                      docker build -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:diagnostic_service \
+                        -f backend/diagnostic_service/Dockerfile backend
+                    """
+
+                    // Build frontend with path-based environment variables
+                    sh """
+                      docker build \
+                        --build-arg REACT_APP_AUTH_SERVICE_URL=/auth \
+                        --build-arg REACT_APP_CASE_SERVICE_URL=/case \
+                        --build-arg REACT_APP_DIAGNOSTIC_SERVICE_URL=/diagnostic \
+                        -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend \
+                        -f frontend/Dockerfile frontend
+                    """
                 }
             }
         }
@@ -83,7 +107,7 @@ pipeline {
             }
         }
 
-        // 6) Setup S3 Backend Bucket
+        // 6) Setup S3 Backend Bucket (Terraform)
         stage('Setup Backend for Terraform') {
             steps {
                 withCredentials([[
@@ -100,10 +124,8 @@ pipeline {
                                 else
                                     aws s3api create-bucket --bucket ${S3_BUCKET} --region ${AWS_REGION} --create-bucket-configuration LocationConstraint=${AWS_REGION}
                                 fi
-
                                 # Enable versioning
                                 aws s3api put-bucket-versioning --bucket ${S3_BUCKET} --versioning-configuration Status=Enabled
-
                                 # Enable server-side encryption
                                 aws s3api put-bucket-encryption --bucket ${S3_BUCKET} --server-side-encryption-configuration '{
                                     "Rules": [
@@ -132,15 +154,11 @@ pipeline {
                 ]]) {
                     dir('AWS-DEV/terraform/terraform-aws-infra') {
                         sh """
-                            # Step 1: Apply Terraform
                             terraform init
                             terraform plan -out=tfplan
                             terraform apply -auto-approve tfplan
-                            
-                            # Step 2: Update kubeconfig dynamically
+
                             aws eks --region ${AWS_REGION} update-kubeconfig --name ${CLUSTER_NAME}
-                            
-                            # Step 3: Verify cluster connectivity
                             kubectl cluster-info
                             kubectl get nodes
                         """
@@ -180,31 +198,27 @@ pipeline {
             }
         }
 
-	// 9) Wait for Pods
-	stage('Wait for Pods') {
-	    steps {
-		withCredentials([
-		    [
-		        $class: 'AmazonWebServicesCredentialsBinding',
-		        credentialsId: 'aws-credentials-id',
-		        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-		        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-		    ]
-		]) {
-		    script {
-		        sh """
-		          kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-		          # kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
-		          kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
-		        """
-		    }
-		}
-	    }
-	}
-
+        // 9) Wait for Pods
+        stage('Wait for Pods') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            kubectl rollout status deployment/auth-service -n ${KUBE_NAMESPACE} --timeout=300s
+                            kubectl rollout status deployment/case-service -n ${KUBE_NAMESPACE} --timeout=300s
+                            kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+                            kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
+                            kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+                        """
+                    }
+                }
+            }
+        }
 
         // 10) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
@@ -231,7 +245,6 @@ pipeline {
                                 }
                             }
                         }
-                        
                         echo "ALB DNS Name: ${alb_dns}"
                         env.ALB_DNS = alb_dns
                     }
@@ -239,66 +252,18 @@ pipeline {
             }
         }
 
-        // 11) Rebuild Frontend with ALB DNS (so the React app points to the correct backend)
-        stage('Rebuild Frontend with ALB DNS') {
-            steps {
-                withCredentials([
-                    [
-                        $class: 'AmazonWebServicesCredentialsBinding',
-                        credentialsId: 'aws-credentials-id',
-                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                    ],
-                    usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')
-                ]) {
-                    script {
-                        sh """
-                            docker build \\
-                            --build-arg REACT_APP_AUTH_SERVICE_URL=http://${env.ALB_DNS}/auth \\
-                            --build-arg REACT_APP_CASE_SERVICE_URL=http://${env.ALB_DNS}/case \\
-                            --build-arg REACT_APP_DIAGNOSTIC_SERVICE_URL=http://${env.ALB_DNS}/diagnostic \\
-                            -t ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend \\
-                            -f frontend/Dockerfile frontend
-                        """
-                        sh """
-                            echo ${DOCKER_PASS} | docker login ${REGISTRY} -u ${DOCKER_USER} --password-stdin
-                            docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend
-                        """
-                    }
-                }
-            }
-        }
+        // NOTE: We REMOVE or COMMENT OUT the old "Rebuild Frontend with ALB DNS" stage:
+        // stage('Rebuild Frontend with ALB DNS') { ... }
 
-        // 12) Deploy Updated Frontend
-        stage('Deploy Updated Frontend') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
-                    script {
-                        sh """
-                            kubectl set image deployment/frontend frontend=${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:frontend -n ${KUBE_NAMESPACE}
-                            kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
-                        """
-                    }
-                }
-            }
-        }
-
-        // 13) Integration Tests (Now that the new frontend is live with correct ALB endpoints)
+        // 11) Integration Tests (Now that ALB is available)
         stage('Integration Tests') {
             steps {
                 script {
-                    echo "Testing against updated ALB-based frontend & backend: ${env.ALB_DNS}"
+                    echo "Testing against ALB-based paths: http://${env.ALB_DNS}"
                     sh """
-                        # Example test flows:
-                        
                         # 1) Attempt user registration
                         REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \\
-                           -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
+                          -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
                         if [ "\$REGISTER_RESPONSE" = "409" ]; then
                           echo "User already exists."
                         elif [ "\$REGISTER_RESPONSE" = "201" ]; then
@@ -310,7 +275,7 @@ pipeline {
 
                         # 2) Login to get token
                         TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \\
-                           -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
+                          -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
                         if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
                           echo "Login failed. No token returned."
                           exit 1

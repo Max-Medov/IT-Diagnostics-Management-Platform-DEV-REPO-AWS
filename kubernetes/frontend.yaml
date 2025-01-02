@@ -21,12 +21,11 @@ spec:
         - containerPort: 3000
         env:
         - name: REACT_APP_AUTH_SERVICE_URL
-          value: "http://auth-service.it-diagnostics.svc.cluster.local:5000"
+          value: "/auth"
         - name: REACT_APP_CASE_SERVICE_URL
-          value: "http://case-service.it-diagnostics.svc.cluster.local:5001"
+          value: "/case"
         - name: REACT_APP_DIAGNOSTIC_SERVICE_URL
-          value: "http://diagnostic-service.it-diagnostics.svc.cluster.local:5002"
-
+          value: "/diagnostic"
 ---
 apiVersion: v1
 kind: Service
@@ -34,11 +33,10 @@ metadata:
   name: frontend
   namespace: it-diagnostics
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-  - port: 80
-    targetPort: 3000
-    nodePort: 30004
+    - port: 3000
+      targetPort: 3000
   selector:
     app: frontend
 
