@@ -252,10 +252,36 @@ pipeline {
             }
         }
 
-        // NOTE: We REMOVE or COMMENT OUT the old "Rebuild Frontend with ALB DNS" stage:
-        // stage('Rebuild Frontend with ALB DNS') { ... }
+        // 11) Inject ALB DNS into Diagnostic Service
+        stage('Inject ALB DNS into Diagnostic Service') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials-id',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        def newEnvValue = "http://${env.ALB_DNS}/diagnostic"
+                        echo "Patching diagnostic-service Deployment with DIAGNOSTIC_SERVER_URL=${newEnvValue}"
 
-        // 11) Integration Tests (Now that ALB is available)
+                        // Sets an env var in the existing Deployment
+                        sh """
+                          kubectl set env deployment/diagnostic-service \\
+                            -n ${KUBE_NAMESPACE} \\
+                            DIAGNOSTIC_SERVER_URL=${newEnvValue}
+                        """
+
+                        // Wait for the rollout to complete
+                        sh """
+                          kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
+                        """
+                    }
+                }
+            }
+        }
+
+        // 12) Integration Tests
         stage('Integration Tests') {
             steps {
                 script {
