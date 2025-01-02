@@ -50,6 +50,9 @@ kind: Service
 metadata:
   name: grafana
   namespace: it-diagnostics
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-success-codes: "200,302"
 spec:
   selector:
     app: grafana
