@@ -34,12 +34,12 @@ resource "aws_iam_role" "alb_controller" {
 }
 
 # Use the AWS managed AdministratorAccess policy
-data "aws_iam_policy" "alb_controller_managed_policy" {
-  arn = "arn:aws:iam::aws:policy/AWSLoadBalancerControllerIAMPolicy"
+data "aws_iam_policy" "administrator_access" {
+  arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# Attach the policy to the IAM role
-resource "aws_iam_role_policy_attachment" "alb_controller_managed_policy_attach" {
-  policy_arn = data.aws_iam_policy.alb_controller_managed_policy.arn
+# Attach the AdministratorAccess policy to the IAM role
+resource "aws_iam_role_policy_attachment" "alb_controller_admin_policy_attach" {
+  policy_arn = data.aws_iam_policy.administrator_access.arn
   role       = aws_iam_role.alb_controller.name
 }
