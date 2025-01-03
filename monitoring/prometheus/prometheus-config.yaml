@@ -33,7 +33,7 @@ data:
       # Scrape the auth-service
       - job_name: 'auth-service'
         kubernetes_sd_configs:
-          - role: endpoints
+          - role: pod
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             action: keep
@@ -53,7 +53,7 @@ data:
       # Scrape the case-service
       - job_name: 'case-service'
         kubernetes_sd_configs:
-          - role: endpoints
+          - role: pod
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             action: keep
@@ -73,7 +73,7 @@ data:
       # Scrape the diagnostic-service
       - job_name: 'diagnostic-service'
         kubernetes_sd_configs:
-          - role: endpoints
+          - role: pod
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             action: keep
