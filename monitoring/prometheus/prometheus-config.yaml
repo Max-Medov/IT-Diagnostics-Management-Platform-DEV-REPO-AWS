@@ -14,17 +14,32 @@ data:
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
+          # Keep only pods in "it-diagnostics" namespace with app=auth-service
           - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_app]
             action: keep
             regex: it-diagnostics;auth-service
+
+          # Set metrics path from annotation
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
             action: replace
             target_label: __metrics_path__
+
+          # Rewrite the address to use port 5000
           - source_labels: [__address__]
             action: replace
             regex: (.+):\d+
             replacement: ${1}:5000
             target_label: __address__
+
+          # ADD: Copy Pod name to "pod" label
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+
+          # ADD: Copy Namespace to "namespace" label (optional but helpful)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
 
       # Scrape the case-service
       - job_name: 'case-service'
@@ -34,14 +49,26 @@ data:
           - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_app]
             action: keep
             regex: it-diagnostics;case-service
+
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
             action: replace
             target_label: __metrics_path__
+
           - source_labels: [__address__]
             action: replace
             regex: (.+):\d+
             replacement: ${1}:5001
             target_label: __address__
+
+          # ADD: Copy Pod name to "pod"
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+
+          # ADD: Copy Namespace to "namespace"
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
 
       # Scrape the diagnostic-service
       - job_name: 'diagnostic-service'
@@ -51,12 +78,24 @@ data:
           - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_app]
             action: keep
             regex: it-diagnostics;diagnostic-service
+
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
             action: replace
             target_label: __metrics_path__
+
           - source_labels: [__address__]
             action: replace
             regex: (.+):\d+
             replacement: ${1}:5002
             target_label: __address__
+
+          # ADD: Copy Pod name to "pod"
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+
+          # ADD: Copy Namespace to "namespace"
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
 
