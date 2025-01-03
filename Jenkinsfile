@@ -178,6 +178,7 @@ pipeline {
                 ]]) {
                     dir('AWS-DEV/kubernetes') {
                         sh """
+                            # 1) Apply all base resources in kubernetes/ folder
                             kubectl apply -f namespace.yaml
                             kubectl apply -f secrets-configmap.yaml
                             kubectl apply -f postgres.yaml
@@ -185,13 +186,19 @@ pipeline {
                             kubectl apply -f case-service.yaml
                             kubectl apply -f diagnostic-service.yaml
                             kubectl apply -f frontend.yaml
-                            kubectl apply -f prometheus-rbac.yaml
-                            kubectl apply -f prometheus-k8s.yaml
-                            kubectl apply -f grafana-dashboard-provider.yaml
-                            kubectl apply -f grafana-dashboard-configmap.yaml
-                            kubectl apply -f datasources.yaml
-                            kubectl apply -f grafana.yaml
                             kubectl apply -f ingress.yaml
+                            
+                            # 2) Prometheus
+                            kubectl apply -f monitoring/prometheus/prometheus-rbac.yaml
+                            kubectl apply -f monitoring/prometheus/prometheus-config.yaml
+                            kubectl apply -f monitoring/prometheus/prometheus-k8s.yaml
+                            
+                            # 3) Grafana
+                            kubectl apply -f monitoring/grafana/grafana-dashboard-provider.yaml
+                            kubectl apply -f monitoring/grafana/grafana-dashboard-configmap.yaml
+                            kubectl apply -f monitoring/grafana/datasources.yaml
+                            kubectl apply -f monitoring/grafana/grafana.yaml
+                            
                         """
                     }
                 }
