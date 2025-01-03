@@ -176,17 +176,17 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    dir('AWS-DEV/kubernetes') {
+                    dir('AWS-DEV') {
                         sh """
                             # 1) Apply all base resources in kubernetes/ folder
-                            kubectl apply -f namespace.yaml
-                            kubectl apply -f secrets-configmap.yaml
-                            kubectl apply -f postgres.yaml
-                            kubectl apply -f auth-service.yaml
-                            kubectl apply -f case-service.yaml
-                            kubectl apply -f diagnostic-service.yaml
-                            kubectl apply -f frontend.yaml
-                            kubectl apply -f ingress.yaml
+                            kubectl apply -f kubernetes/namespace.yaml
+                            kubectl apply -f kubernetes/secrets-configmap.yaml
+                            kubectl apply -f kubernetes/postgres.yaml
+                            kubectl apply -f kubernetes/auth-service.yaml
+                            kubectl apply -f kubernetes/case-service.yaml
+                            kubectl apply -f kubernetes/diagnostic-service.yaml
+                            kubectl apply -f kubernetes/frontend.yaml
+                            kubectl apply -f kubernetes/ingress.yaml
                             
                             # 2) Prometheus
                             kubectl apply -f monitoring/prometheus/prometheus-rbac.yaml
@@ -221,6 +221,7 @@ pipeline {
                             kubectl rollout status deployment/diagnostic-service -n ${KUBE_NAMESPACE} --timeout=300s
                             kubectl rollout status deployment/frontend -n ${KUBE_NAMESPACE} --timeout=300s
                             kubectl rollout status deployment/grafana -n ${KUBE_NAMESPACE} --timeout=300s
+                            kubectl rollout status deployment/prometheus -n ${KUBE_NAMESPACE} --timeout=300s
                         """
                     }
                 }
