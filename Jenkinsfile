@@ -297,7 +297,7 @@ pipeline {
 
                     sh """
                       # 1) Attempt user registration
-                      REGISTER_RESPONSE=\$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+                      REGISTER_RESPONSE=\$(curl -k -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
                         -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/register)
                       if [ "\$REGISTER_RESPONSE" = "409" ]; then
                         echo "User already exists."
@@ -309,7 +309,7 @@ pipeline {
                       fi
 
                       # 2) Login to get token
-                      TOKEN=\$(curl -s -f -X POST -H 'Content-Type: application/json' \
+                      TOKEN=\$(curl -k -s -f -X POST -H 'Content-Type: application/json' \
                         -d '{"username": "${TEST_USER}", "password": "${TEST_PASS}"}' http://${env.ALB_DNS}/auth/login | jq -r '.access_token')
                       if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
                         echo "Login failed. No token returned."
@@ -318,7 +318,7 @@ pipeline {
                       echo "Login successful. Token: \$TOKEN"
 
                       # 3) Create a new case
-                      CASE_RESPONSE=\$(curl -s -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \
+                      CASE_RESPONSE=\$(curl -k -s -f -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer \$TOKEN" \
                         -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \
                         http://${env.ALB_DNS}/case/cases)
                       echo "CASE_RESPONSE=\$CASE_RESPONSE"
@@ -333,7 +333,7 @@ pipeline {
                       echo "New case_id = \$CASE_ID"
 
                       # 4) Download script for the newly created case
-                      curl -f -H "Authorization: Bearer \$TOKEN" http://${env.ALB_DNS}/diagnostic/download_script/\$CASE_ID -o downloaded_script.sh
+                      curl -k -f -H "Authorization: Bearer \$TOKEN" http://${env.ALB_DNS}/diagnostic/download_script/\$CASE_ID -o downloaded_script.sh
                       if [ ! -s downloaded_script.sh ]; then
                         echo "Failed to download diagnostic script!"
                         exit 1
