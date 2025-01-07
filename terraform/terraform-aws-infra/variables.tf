@@ -11,7 +11,7 @@ variable "cluster_version" {
 variable "allowed_cidrs" {
   type    = list(string)
   # Restrict the public EKS API to my IP
-  default = ["87.71.165.178/32"]
+  default = ["132.70.66.14/32"]
 }
 
 variable "vpc_cidr" {
