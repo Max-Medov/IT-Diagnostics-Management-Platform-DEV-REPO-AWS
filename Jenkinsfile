@@ -32,9 +32,18 @@ pipeline {
             }
         }
 
-        // 3) Build Docker Images
+        // 3) Build Docker Images (with login)
         stage('Build Docker Images') {
             steps {
+                // FIRST, authenticate with Docker Hub
+                withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", 
+                                                 usernameVariable: 'DOCKER_USER', 
+                                                 passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        echo \$DOCKER_PASS | docker login \$REGISTRY -u \$DOCKER_USER --password-stdin
+                    """
+                }
+                // THEN build images
                 script {
                     // Build auth_service
                     sh """
@@ -95,9 +104,11 @@ pipeline {
         // 5) Push Docker Images
         stage('Push Images to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", 
+                                                 usernameVariable: 'DOCKER_USER', 
+                                                 passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo ${DOCKER_PASS} | docker login ${REGISTRY} -u ${DOCKER_USER} --password-stdin
+                        echo \$DOCKER_PASS | docker login \$REGISTRY -u \$DOCKER_USER --password-stdin
                         docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:auth_service
                         docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:case_service
                         docker push ${REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}:diagnostic_service
@@ -110,9 +121,9 @@ pipeline {
         // 6) Setup S3 Backend Bucket (Terraform)
         stage('Setup Backend for Terraform') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -146,9 +157,9 @@ pipeline {
         // 7) Apply Terraform Configuration
         stage('Apply Terraform') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -170,9 +181,9 @@ pipeline {
         // 8) Deploy Kubernetes Resources
         stage('Deploy Kubernetes Resources') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -198,7 +209,6 @@ pipeline {
                             kubectl apply -f monitoring/grafana/grafana-dashboard-configmap.yaml
                             kubectl apply -f monitoring/grafana/datasources.yaml
                             kubectl apply -f monitoring/grafana/grafana.yaml
-                            
                         """
                     }
                 }
@@ -208,9 +218,9 @@ pipeline {
         // 9) Wait for Pods
         stage('Wait for Pods') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -231,9 +241,9 @@ pipeline {
         // 10) Fetch ALB DNS Name
         stage('Fetch ALB DNS Name') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -263,9 +273,9 @@ pipeline {
         // 11) Inject ALB DNS into Diagnostic Service
         stage('Inject ALB DNS into Diagnostic Service') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-credentials-id',
+                    credentialsId: 'aws-credentials-id',  // <-- Replace if needed
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
@@ -322,7 +332,6 @@ pipeline {
                         -d '{"description": "Integration Test Case", "platform": "Linux Machine"}' \
                         http://${env.ALB_DNS}/case/cases)
                       echo "CASE_RESPONSE=\$CASE_RESPONSE"
-                      # Expect something like: {"message":"Case created successfully.","case_id":3}
 
                       # Extract case_id
                       CASE_ID=\$(echo \$CASE_RESPONSE | jq -r '.case_id')
@@ -340,9 +349,7 @@ pipeline {
                       fi
                       echo "Successfully downloaded diagnostic script for case #\$CASE_ID"
 
-                      # Show that the script was saved
                       ls -lh downloaded_script.sh
-
                     """
                 }
             }
